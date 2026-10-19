@@ -1,0 +1,20 @@
+# Data Sources Specification & Meteorological Justification
+
+Tài liệu này quy định toàn bộ các nguồn dữ liệu được sử dụng trong dự án, phân loại rõ bản chất vật lý (**Quan trắc thật** vs. **Tái phân tích/Mô hình**) và lý do lựa chọn dưới góc độ Khí tượng học Đô thị.
+
+## 1. Bảng Tổng hợp các Nguồn Dữ liệu Chính thức
+
+| Nhóm dữ liệu | Nguồn & Dataset ID | Bản chất | Độ phân giải gốc | Các biến trích xuất | Vai trò Vật lý & Khí tượng tại London |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **1. Biến mục tiêu (Ground Truth)** | **OpenAQ / LAQN / DEFRA AURN** | Quan trắc thật tại trạm mặt đất | Điểm (Point stations) | `pm25` ($\mu\text{g/m}^3$) | Cung cấp nhãn thực tế ($Y$) tại các ô có đặt trạm và dùng để tính phần dư không gian (spatial residuals). |
+| **2. Khí tượng bề mặt** | **ECMWF ERA5-Land** (`ECMWF/ERA5_LAND/HOURLY`) | Tái phân tích (Reanalysis) | $0.1^\circ \times 0.1^\circ$ (~9 km), Theo giờ | `temperature_2m`, `dewpoint_temperature_2m`, `u_component_of_wind_10m`, `v_component_of_wind_10m`, `total_precipitation`, `surface_pressure` | Độ phân giải 9 km bắt được sự chênh lệch nhiệt - ẩm giữa nội đô London và vùng vành đai xanh. Gió và mưa quyết định cơ chế phát tán ngang và rửa trôi ướt (wet scavenging). |
+| **3. Khí tượng lớp biên** | **ECMWF ERA5** (`ECMWF/ERA5/HOURLY` hoặc Open-Meteo `era5`) | Tái phân tích (Reanalysis) | $0.25^\circ \times 0.25^\circ$ (~28 km), Theo giờ | `boundary_layer_height` (BLH), `total_cloud_cover` | BLH quyết định thể tích hộp hòa trộn thẳng đứng. Khi nghịch nhiệt ban đêm xảy ra (BLH < 100 m), $PM_{2.5}$ bị giữ chặt sát mặt đất. |
+| **4. Khí vết vệ tinh** | **Sentinel-5P OFFL NO2** (`COPERNICUS/S5P/OFFL/L3_NO2`) | Quan trắc vệ tinh (TROPOMI) | Pixel native khoảng $3.5 \times 5.5\text{ km}$ (tùy thời kỳ/product) | `tropospheric_NO2_column_number_density`, `cloud_fraction` | Predictor cột NO2, không phải phép đo PM2.5 mặt đất. Việc reproject/resample trong GEE không tăng độ phân giải vật lý. |
+| **5. Quang học & Nhiệt vệ tinh** | **MODIS MAIAC & LST** (`MODIS/061/MCD19A2_GRANULES`, `MOD11A1`) | Quan trắc vệ tinh (Terra/Aqua) | $1 \times 1\text{ km}$, Theo ngày | `Optical_Depth_055` (AOD), `AOD_QA`, `LST_Day_1km`, `LST_Night_1km` | Đo độ dày quang học của cột khí dung (AOD) và cường độ Đảo nhiệt đô thị ban đêm (`LST_Night`). Bị khuyết thiếu nhiều do mây. |
+| **6. Khí dung nền mô hình** | **ECMWF CAMS** (`ECMWF/CAMS/NRT` hoặc Open-Meteo CAMS Europe) | Mô hình hóa học khí quyển | $0.1^\circ - 0.4^\circ$ (~10–40 km) | `total_aerosol_optical_depth_at_550nm_surface`, `pm2p5_conc` | Đóng vai trò trường nền liên tục (continuous background field) khi MODIS bị mù do mây, giúp bắt các đợt ô nhiễm xuyên biên giới từ lục địa châu Âu tràn qua eo biển Manche. |
+| **7. Đặc trưng tĩnh 1 km** | **ESA WorldCover 10m** (`ESA/WorldCover/v200`) & **OpenStreetMap** | Viễn thám tĩnh & Bản đồ | 10 m / Vector | Tỷ lệ đất xây dựng (`built_up_frac`), cây xanh (`tree_frac`), mật độ đường chính (`major_road_density`), khoảng cách tới tâm London | **Bắt buộc phải có** để phá vỡ tính đồng nhất của các ô 1 km nằm chung trong một pixel ERA5 (9 km) hoặc S5P (5.5 km). |
+
+## 2. Các Nguồn Dữ liệu đã Khảo sát nhưng Quyết định Loại bỏ
+* **NOAA ISD (Integrated Surface Database):** Chỉ có quan trắc tại vài sân bay rìa thành phố (Heathrow, London City). Biến tầm nhìn (Visibility) tại London bị nhiễu nặng bởi sương mù tự nhiên (fog/mist khi RH > 90%) chứ không phản ánh thuần túy nồng độ bụi khô.
+* **Sentinel-5P Absorbing Aerosol Index (`L3_AER_AI`):** Chỉ nhạy với các lớp bụi hấp thụ bức xạ UV ở tầng cao (bụi sa mạc Sahara, khói cháy rừng), không nhạy với hạt ô nhiễm giao thông và Nitrate nằm sát mặt đất tại London.
+* **Open-Meteo (Chế độ `best_match` mặc định):** Trộn lẫn mô hình IFS, ERA5 và ERA5-Land theo thời gian, gây mất tính nhất quán và không đảm bảo khả năng tái lập (non-reproducible).

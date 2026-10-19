@@ -1,0 +1,30 @@
+# Secrets and local environments
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Downloaded and derived data; keep only directory placeholders
+/data/raw/**
+!/data/raw/.gitkeep
+/data/interim/**
+!/data/interim/.gitkeep
+/data/warehouse/**
+!/data/warehouse/.gitkeep
+/data/processed/**
+!/data/processed/.gitkeep
+/data/external/**
+!/data/external/.gitkeep
+
+# Local model artifacts
+/models/**
+!/models/.gitkeep
+
+# Potentially large generated predictions
+/reports/predictions/**
+!/reports/predictions/.gitkeep
