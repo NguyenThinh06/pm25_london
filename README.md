@@ -17,10 +17,10 @@
 | :---: | :--- | :---: | :--- |
 | **M1** | **Khung kiến trúc & Hợp đồng dữ liệu:** Cấu trúc thư mục, môi trường, thiết kế Data Contract, Schema Specification, nguyên tắc chống rò rỉ dữ liệu (Spatial Data Leakage). | ✅ | Data Architect |
 | **M2** | **Thu thập & Chuẩn hóa dữ liệu trạm quan trắc:** Crawler OpenAQ v3 API, gán metadata và phân loại loại trạm (`site_type`) từ mạng lưới LAQN, đối soát tọa độ British National Grid (EPSG:27700). | ✅ | Crawler A, Quality |
-| **M3** | **Xây dựng Lưới chuẩn không gian Greater London:** Chuẩn hóa `dim_grid_1km` chuẩn 1,578 ô (lọc theo ranh giới ONS/GLA, bảo tồn trạm ngoại vi, tính khoảng cách Charing Cross, loại bỏ ~1,640 ô thừa ngoài phạm vi). | ✅ | Data Architect, Transform |
-| **M4** | **Trích xuất dữ liệu Viễn thám & Khí quyển (Google Earth Engine):** Tự động trích xuất theo ô lưới 1 km cho ERA5-Land (24 tháng), CAMS NRT (24 tháng), Sentinel-5P $\text{NO}_2$ (22 tháng). Dựng Fact Warehouse. | 🔵 Đang làm | Crawler B, Transform |
-| **M5** | **Xây dựng Feature Marts & Tập huấn luyện:** Dựng spine không gian `(grid_id, date)` (`mart_grid_daily_features`) và tập huấn luyện tại trạm `(station_key, date)` (`mart_station_daily_training`). | ⏳ | Transform, Data Architect |
-| **M6** | **Mô hình hóa & Đánh giá Không gian (Spatial CV):** Phân chia 5 cụm trạm không giao nhau (Grouped Spatial 5-Fold), xây dựng baseline IDW / Spatial Mean, huấn luyện LightGBM/CatBoost, thực nghiệm Q1–Q5. | ⏳ | Analysis & Modeling |
+| **M3** | **Xây dựng Lưới chuẩn không gian Greater London:** Chuẩn hóa `dim_grid_1km` chuẩn 1,581 ô (lọc theo ranh giới ONS/GLA, bảo tồn trạm ngoại vi, tính khoảng cách Charing Cross, loại bỏ ~1,640 ô thừa ngoài phạm vi). | ✅ | Data Architect, Transform |
+| **M4** | **Trích xuất Viễn thám & Dựng Fact Warehouse:** Trích xuất GEE 24 tháng (ERA5-Land, CAMS, Sentinel-5P, MODIS LST). Dựng Fact Warehouse chuẩn hóa (`fact_meteo_daily`, `fact_satellite_daily`, `fact_ground_truth_daily`). | ✅ | Crawler B, Data Architect |
+| **M5** | **Xây dựng Feature Marts & Tập huấn luyện:** Dựng spine không gian `(grid_id, date)` (`mart_grid_daily_features` 1.15M dòng) và tập huấn luyện tại trạm `(station_key, date)` (`mart_station_daily_training` 20K dòng). | ✅ | Transform, Data Architect |
+| **M6** | **Mô hình hóa & Đánh giá Không gian (Spatial CV):** Phân chia 5 cụm trạm không giao nhau (Grouped Spatial 5-Fold), xây dựng baseline IDW / Spatial Mean, huấn luyện LightGBM/CatBoost, thực nghiệm Q1–Q5. | 🔵 Đang làm | Analysis & Modeling |
 | **M7** | **Bản đồ Ước lượng Toàn thành phố & Dashboard:** Sinh bản đồ raster $\text{PM}_{2.5}$ 1 km toàn Greater London kèm khoảng bất định, xây dựng Dashboard báo cáo sức khỏe dữ liệu và phân tích. | ⏳ | Dashboard & Viz |
 
 ---
@@ -72,6 +72,51 @@ python scripts/build_feature_marts.py
 
 # BƯỚC 5: Huấn luyện Baseline & Mô hình Spatial CV (5-Fold)
 python scripts/train_spatial_models.py
+```
+
+---
+
+## Sơ đồ Đường ống Dữ liệu (End-to-End Pipeline)
+
+Hệ thống xử lý luồng dữ liệu 5 tầng từ nguồn thô đến mô hình hóa và trực quan hóa:
+
+```mermaid
+flowchart TD
+    subgraph S1 ["1. NGUỒN DỮ LIỆU THÔ (data/raw)"]
+        OAQ["OpenAQ v3 API (24 tháng)"] --> RAW_OAQ["data/raw/openaq_chunks/"]
+        GEE["Google Earth Engine API"] --> RAW_GEE["data/raw/gee_chunks/<br/>(era5land, cams, s5p, lst)"]
+        ONS["ONS / GLA DataStore"] --> EXT_BND["data/external/<br/>greater_london_boundary.geojson"]
+    end
+
+    subgraph S2 ["2. TẦNG CHUẨN HÓA TRUNG GIAN (data/interim)"]
+        RAW_OAQ -->|merge_openaq_chunks.py| INT_OAQ["data/interim/openaq_daily.parquet<br/>(22.8K bản ghi, QC >= 18h)"]
+        INT_OAQ -->|build_dim_station.py| INT_ST["data/interim/dim_station.parquet<br/>(99 trạm, tọa độ BNG + LAQN site_type)"]
+    end
+
+    subgraph S3 ["3. TẦNG KHO DỮ LIỆU CHUẨN (data/warehouse)"]
+        EXT_BND -->|build_dim_grid_1km.py| WH_GRID["dim_grid_1km.parquet<br/>(1,581 ô lưới chuẩn Greater London)"]
+        INT_ST -->|build_warehouse_facts.py| WH_ST["dim_station.parquet (99 trạm)"]
+        INT_OAQ -->|build_warehouse_facts.py| WH_GT["fact_ground_truth_daily.parquet<br/>(20.3K ngày đo hợp lệ)"]
+        RAW_GEE & WH_GRID -->|build_warehouse_facts.py| WH_METEO["fact_meteo_daily.parquet<br/>(1.15M dòng: ERA5 + CAMS)"]
+        RAW_GEE & WH_GRID -->|build_warehouse_facts.py| WH_SAT["fact_satellite_daily.parquet<br/>(1.15M dòng: S5P NO2 + MODIS LST)"]
+    end
+
+    subgraph S4 ["4. TẦNG FEATURE MARTS (data/processed)"]
+        WH_GRID & WH_METEO & WH_SAT -->|build_feature_marts.py| MART_GRID["mart_grid_daily_features.parquet<br/>(1.15M dòng, 33 features toàn lưới)"]
+        WH_GT & MART_GRID -->|build_feature_marts.py| MART_TRAIN["mart_station_daily_training.parquet<br/>(20.3K mẫu huấn luyện tại 92 trạm)"]
+    end
+
+    subgraph S5 ["5. MÔ HÌNH HÓA & TRỰC QUAN HÓA"]
+        MART_TRAIN -->|train_spatial_models.py| MODEL["Grouped Spatial 5-Fold CV<br/>(Baseline IDW vs LightGBM)"]
+        MODEL & MART_GRID -->|predict| PRED["prediction_grid_daily<br/>(Bản đồ PM2.5 1 km toàn London)"]
+        PRED --> DASH["Web / Streamlit Dashboard"]
+    end
+
+    style S1 fill:#f9f9f9,stroke:#666,stroke-width:1px
+    style S2 fill:#eef6ff,stroke:#2b7fff,stroke-width:1px
+    style S3 fill:#eafaf1,stroke:#27ae60,stroke-width:1px
+    style S4 fill:#fef9e7,stroke:#f39c12,stroke-width:1px
+    style S5 fill:#f4ecf7,stroke:#8e44ad,stroke-width:1px
 ```
 
 ---
