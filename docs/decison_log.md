@@ -19,6 +19,7 @@ Tài liệu này lưu trữ các quyết định thiết kế quan trọng trong
 * **Bối cảnh:** ERA5 gốc có biến Độ cao lớp biên (`BLH`) cực kỳ quan trọng nhưng độ phân giải quá thô ($0.25^\circ \approx 28\text{ km}$), chỉ phủ vài điểm lưới trên toàn bộ London. Ngược lại, ERA5-Land có độ phân giải cao hơn ($0.1^\circ \approx 9\text{ km}$) nhưng lại thiếu biến `BLH`.
 * **Quyết định:** Lấy các biến nhiệt - ẩm - gió bề mặt từ **ERA5-Land**, và chỉ lấy riêng `BLH` (cùng `BLH_min` ban đêm, `BLH_max` ban ngày) từ **ERA5 gốc**.
 * **Hệ quả:** Giảm thiểu sai số đại diện không gian cho nhiệt độ và độ ẩm đô thị mà vẫn giữ được thông tin vật lý về nghịch nhiệt lớp biên.
+* **Trạng thái thực hiện (Pha 1 kiểm kê):** **Chưa triển khai phần BLH.** Chỉ ERA5-Land được trích xuất (`extract_gee_features.py` không có nguồn ERA5); không có cột `blh_*` trong chunk, warehouse hay mart. `blh_*` là V2 (xem [schema.md](schema.md)). Phần hệ quả về nghịch nhiệt lớp biên chưa được kiểm chứng bằng dữ liệu dự án.
 
 ---
 
@@ -26,6 +27,7 @@ Tài liệu này lưu trữ các quyết định thiết kế quan trọng trong
 * **Trạng thái:** Đã chấp thuận (Accepted)
 * **Bối cảnh:** Khi gọi `reduceRegions` trên Google Earth Engine (GEE) từ ảnh độ phân giải thô (9–28 km) xuống lưới 1 km, phép lấy mẫu mặc định (`nearest neighbor`) gán cùng một giá trị cho hàng chục ô 1 km lân cận, tạo ra ranh giới bậc thang phi vật lý (blocky artifacts) trên bản đồ dự báo.
 * **Quyết định:** Có thể dùng bilinear cho trường liên tục khi phù hợp với biến và quy trình trích xuất, nhưng phải lưu độ phân giải nguồn và không diễn giải giá trị resample như thông tin quan trắc 1 km mới. Với dữ liệu vệ tinh có mask (MODIS AOD, S5P $NO_2$), áp dụng QA và lưu coverage/pixel hợp lệ theo đúng product; không giả định một pixel gốc tương ứng đơn giản với từng ô 1 km.
+* **Trạng thái thực hiện (Pha 1 kiểm kê):** Không dùng bilinear. ERA5-Land và CAMS lấy bằng `Reducer.first()` tại điểm tâm ô (lấy mẫu pixel gần nhất, không nội suy). S5P và LST dùng `mean` + `count` trên polygon 1 km ở `scale = 1000 m`; `count` chỉ nhận giá trị 0/1 nên không phải số pixel gốc. QA vệ tinh chưa được áp dụng trong code (S5P: không lọc `qa_value`; LST: không đọc `QC_Day/QC_Night`).
 
 ---
 
@@ -37,6 +39,7 @@ Tài liệu này lưu trữ các quyết định thiết kế quan trọng trong
 * **Quyết định:**
   1. Chỉ lọc bỏ các giá trị $NO_2 < -0.001\text{ mol/m}^2$ (nhiễu cực đoan), giữ nguyên các giá trị âm nhỏ trong khoảng $[-0.001, 0]$.
   2. Không loại bỏ các dòng thiếu MODIS AOD; thay vào đó, lưu bộ 3 cột cho mỗi biến vệ tinh: `*_mean`, `*_valid_px`, và `*_valid_flag` (0/1). Bản thân cột cờ `aod_valid_flag` được đưa vào mô hình như một chỉ báo trạng thái thời tiết synoptic.
+* **Trạng thái thực hiện (Pha 1 kiểm kê):** **Chưa triển khai.** Không có dữ liệu MODIS AOD trong dự án (không có `data/raw/gee_chunks/maiac`), nên không có `aod_valid_flag` và không có cột nào như vậy được đưa vào mô hình hiện có. Quy tắc lọc `NO2 < -0.001` **không được cài đặt** trong code (min quan sát −7,2e−5). Bộ ba `*_mean/_valid_px/_valid_flag` hiện có cho S5P và LST có ngữ nghĩa: `valid_px` ∈ {0, 1}, `valid_flag = valid_px > 0` ("có giá trị"), không phải xác nhận QA.
 
 ---
 
@@ -44,3 +47,4 @@ Tài liệu này lưu trữ các quyết định thiết kế quan trọng trong
 * **Trạng thái:** Đã chấp thuận (Accepted)
 * **Bối cảnh:** Trong cùng một ngày $t$, các ô lưới 1 km tại London chia sẻ trường thời tiết vùng rất giống nhau. Nếu chia tập Train/Test ngẫu nhiên theo dòng `(grid_id, date)`, mô hình sẽ học thuộc lòng ngày $t$ từ trạm A để đoán trạm B cách đó 2 km (Data Leakage), dẫn đến điểm số ảo khi đánh giá nhưng thất bại khi suy luận ở các vùng không có trạm.
 * **Quyết định:** Dùng **Grouped Spatial K-Fold** theo cụm địa điểm/trạm làm đánh giá chính cho khả năng suy rộng tới vị trí chưa có trạm. Temporal split chỉ là kiểm tra độ ổn định trong cửa sổ nghiên cứu, không đại diện dự báo tương lai. Mọi feature dựa trên nhãn phải được tạo lại chỉ từ train trong từng fold.
+* **Trạng thái thực hiện (Pha 1 kiểm kê):** Grouped Spatial K-Fold đã chạy (`GroupKFold(5)`, 36 nhóm cho 92 trạm); nhóm hiện là `grid_id` + các ô có tâm cách nhau ≤ 1,5 km (đề xuất mặc định giữ để tái lập baseline, kèm cấu hình 79 nhóm < 300 m làm phân tích độ nhạy ở Phase 3). Chế độ B có đề xuất mặc định là Phương án B1 (train 2023, test 2024 trên 35 trạm có mặt cả 2 năm) làm kiểm tra chuyển giao thời gian chính; thiết kế cũ 90 ngày không phù hợp với 731 ngày (xem [analysis_plan.md](analysis_plan.md)).

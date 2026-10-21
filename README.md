@@ -17,11 +17,11 @@
 | :---: | :--- | :---: | :--- |
 | **M1** | **Khung kiến trúc & Hợp đồng dữ liệu:** Cấu trúc thư mục, môi trường, thiết kế Data Contract, Schema Specification, nguyên tắc chống rò rỉ dữ liệu (Spatial Data Leakage). | ✅ | Data Architect |
 | **M2** | **Thu thập & Chuẩn hóa dữ liệu trạm quan trắc:** Crawler OpenAQ v3 API, gán metadata và phân loại loại trạm (`site_type`) từ mạng lưới LAQN, đối soát tọa độ British National Grid (EPSG:27700). | ✅ | Crawler A, Quality |
-| **M3** | **Xây dựng Lưới chuẩn không gian Greater London:** Chuẩn hóa `dim_grid_1km` chuẩn 1,581 ô (lọc theo ranh giới ONS/GLA, bảo tồn trạm ngoại vi, tính khoảng cách Charing Cross, loại bỏ ~1,640 ô thừa ngoài phạm vi). | ✅ | Data Architect, Transform |
-| **M4** | **Trích xuất Viễn thám & Dựng Fact Warehouse:** Trích xuất GEE 24 tháng (ERA5-Land, CAMS, Sentinel-5P, MODIS LST). Dựng Fact Warehouse chuẩn hóa (`fact_meteo_daily`, `fact_satellite_daily`, `fact_ground_truth_daily`). | ✅ | Crawler B, Data Architect |
-| **M5** | **Xây dựng Feature Marts & Tập huấn luyện:** Dựng spine không gian `(grid_id, date)` (`mart_grid_daily_features` 1.15M dòng) và tập huấn luyện tại trạm `(station_key, date)` (`mart_station_daily_training` 20K dòng). | ✅ | Transform, Data Architect |
-| **M6** | **Mô hình hóa & Đánh giá Không gian (Spatial CV):** Phân chia 5 cụm trạm không giao nhau (Grouped Spatial 5-Fold), xây dựng baseline IDW / Spatial Mean, huấn luyện LightGBM/CatBoost, thực nghiệm Q1–Q5. | 🔵 Đang làm | Analysis & Modeling |
-| **M7** | **Bản đồ Ước lượng Toàn thành phố & Dashboard:** Sinh bản đồ raster $\text{PM}_{2.5}$ 1 km toàn Greater London kèm khoảng bất định, xây dựng Dashboard báo cáo sức khỏe dữ liệu và phân tích. | ⏳ | Dashboard & Viz |
+| **M3** | **Xây dựng Lưới chuẩn không gian Greater London:** Chuẩn hóa `dim_grid_1km` chuẩn 1,581 ô (lọc theo ranh giới ONS/GLA, gồm 1,577 ô canonical có tâm trong ranh giới + 4 ô ngữ cảnh chứa trạm ngoại vi, tính khoảng cách Charing Cross, loại bỏ ~1,640 ô thừa ngoài phạm vi). | ✅ | Data Architect, Transform |
+| **M4** | **Trích xuất Viễn thám & Dựng Fact Warehouse:** Trích xuất GEE 24 tháng (ERA5-Land, CAMS, Sentinel-5P, MODIS LST; MAIAC AOD và BLH dự kiến V2). Dựng Fact Warehouse chuẩn hóa (`fact_meteo_daily`, `fact_satellite_daily`, `fact_ground_truth_daily`). | ✅ | Crawler B, Data Architect |
+| **M5** | **Xây dựng Feature Marts & Đặc trưng Không gian Tĩnh:** Trích xuất biến tĩnh không gian (ESA WorldCover 10m `built_up_frac`, `tree_cover_frac`, `dist_to_thames_km`, SRTM DEM `elevation_m`, GHSL `population_density`, DfT Major Road Network `major_road_length_m`). Dựng spine không gian `(grid_id, date)` (`mart_grid_daily_features` 1.15M dòng = 1.581 ô × 731 ngày) và tập huấn luyện tại trạm `(station_key, date)` (`mart_station_daily_training` 20.351 dòng tại 92 trạm / 75 ô). | ✅ | Transform, Data Architect |
+| **M6** | **Mô hình hóa & Đánh giá Không gian (Spatial CV):** Grouped Spatial 5-Fold Cross Validation theo 36 nhóm địa lý (gộp ô kề ≤ 1.5 km), đánh giá 3 baseline (CAMS, Daily Train Mean, IDW) và 2 biến thể LightGBM (thuần 30 features, lai 34 features; không dùng `site_type` làm feature dự báo). IDW là baseline mạnh nhất (RMSE 3.45); hai mô hình LightGBM chưa vượt qua IDW (RMSE 3.79 và 3.91, Anomaly R² âm). Các thực nghiệm ablation Q1–Q5 chưa hoàn thành đầy đủ. | 🔵 Cần kiểm chứng | Analysis & Modeling |
+| **M7** | **Bản đồ Ước lượng Toàn thành phố & Dashboard:** Suy luận bản đồ toàn lưới (`prediction_grid_daily` 1.15M dòng). Giao diện Dashboard (Streamlit/Web) và phân tích chuyên sâu đang chờ hoàn thiện. | ⏳ Chưa hoàn thiện | Dashboard & Viz |
 
 ---
 
@@ -56,22 +56,26 @@ cp .env.example .env
 ### 3. Quy trình chạy Pipeline từng bước
 
 ```bash
-# BƯỚC 1: Xây dựng bảng chiều không gian chuẩn dim_grid_1km (1,578 ô Greater London)
+# BƯỚC 1: Xây dựng bảng chiều không gian chuẩn dim_grid_1km (1,581 ô: 1,577 canonical + 4 ô ngữ cảnh)
 python scripts/build_dim_grid_1km.py --download-boundary
 
 # BƯỚC 2: Thu thập và chuẩn hóa danh mục trạm quan trắc dim_station
 python scripts/build_dim_station.py
 
-# BƯỚC 3: Trích xuất dữ liệu khí quyển & viễn thám từ GEE (chạy chunk theo tháng)
+# BƯỚC 3: Trích xuất dữ liệu khí quyển & viễn thám từ GEE (chạy chunk theo tháng; MAIAC AOD là V2)
 python scripts/extract_gee_features.py era5land cams --start 2023-01 --end 2024-12
-python scripts/extract_gee_features.py s5p --start 2023-01 --end 2024-12
+python scripts/extract_gee_features.py s5p lst --start 2023-01 --end 2024-12
 
-# BƯỚC 4: Hợp nhất Fact bảng Warehouse và dựng Feature Mart
+# BƯỚC 4: Hợp nhất Fact bảng Warehouse, dựng Feature Marts và bổ sung biến tĩnh không gian
+# LƯU Ý THỨ TỰ: Với code hiện tại, build_spatial_static_features.py cập nhật các mart nếu chúng đã tồn tại.
+# Do đó, thứ tự thực thi là: build_warehouse_facts -> build_feature_marts -> build_spatial_static_features.
+# (Về dài hạn, pipeline cần được refactor để dựng feature tĩnh thành đầu vào trước khi tạo mart).
 python scripts/build_warehouse_facts.py
 python scripts/build_feature_marts.py
+python scripts/build_spatial_static_features.py
 
-# BƯỚC 5: Huấn luyện Baseline & Mô hình Spatial CV (5-Fold)
-python scripts/train_spatial_models.py
+# BƯỚC 5: Huấn luyện Baseline & Mô hình Spatial CV (5-Fold) + Dự đoán toàn lưới
+python scripts/train_spatial_models.py --predict-grid
 ```
 
 ---
@@ -102,8 +106,8 @@ flowchart TD
     end
 
     subgraph S4 ["4. TẦNG FEATURE MARTS (data/processed)"]
-        WH_GRID & WH_METEO & WH_SAT -->|build_feature_marts.py| MART_GRID["mart_grid_daily_features.parquet<br/>(1.15M dòng, 33 features toàn lưới)"]
-        WH_GT & MART_GRID -->|build_feature_marts.py| MART_TRAIN["mart_station_daily_training.parquet<br/>(20.3K mẫu huấn luyện tại 92 trạm)"]
+        WH_GRID & WH_METEO & WH_SAT -->|build_feature_marts.py| MART_GRID["mart_grid_daily_features.parquet<br/>(1.15M dòng, 41 cột toàn lưới)"]
+        WH_GT & MART_GRID -->|build_feature_marts.py| MART_TRAIN["mart_station_daily_training.parquet<br/>(20.351 mẫu huấn luyện tại 92 trạm / 75 ô)"]
     end
 
     subgraph S5 ["5. MÔ HÌNH HÓA & TRỰC QUAN HÓA"]
@@ -172,7 +176,7 @@ Mỗi thành viên sở hữu không gian làm việc (workspace) của mình. C
 * **Công việc đã hoàn thành & đang phụ trách:**
   * ✅ Thiết kế toàn bộ quy chuẩn kho dữ liệu trong [docs/schema.md](docs/schema.md) và hợp đồng dữ liệu trong [docs/data_contract.md](docs/data_contract.md).
   * ✅ Chuẩn hóa hệ tọa độ dự án sang **British National Grid (EPSG:27700)**, khớp với chuẩn khảo sát Vương quốc Anh.
-  * ✅ Tái cấu trúc và tối ưu hóa lưới không gian: Thay thế lưới chữ nhật bounding-box thô (3,224 ô) bằng quy trình clip không gian chính xác theo ranh giới Greater London của ONS/GLA, giảm còn **1,578 ô** (1,577 ô nội bộ + 1 ô trạm Dartford ngoại vi), tiết kiệm 50% chi phí tính toán và lưu trữ.
+  * ✅ Tái cấu trúc và tối ưu hóa lưới không gian: Thay thế lưới chữ nhật bounding-box thô (3,224 ô) bằng quy trình clip không gian chính xác theo ranh giới Greater London của ONS/GLA, giảm còn **1,581 ô** (1,577 ô canonical có tâm trong ranh giới + 4 ô ngữ cảnh ngoại vi chứa trạm quan trắc mặt đất), tiết kiệm 50% chi phí tính toán và lưu trữ.
   * ✅ Giữ cấu trúc thư mục phân tầng sạch sẽ, điều phối tích hợp giữa các nhánh, duyệt PR liên quan tới schema warehouse và hợp đồng dữ liệu.
 * **Định nghĩa hoàn thành:** Toàn bộ pipeline từ raw đến warehouse chạy tự động, không lỗi xung đột khóa, dữ liệu đúng grain và không rò rỉ không gian.
 
@@ -193,8 +197,8 @@ Mỗi thành viên sở hữu không gian làm việc (workspace) của mình. C
 ### 4. Crawler B & Remote Sensing (Khai thác Viễn thám & Tái phân tích Khí quyển)
 * **Mục tiêu:** Trích xuất các biến khí tượng và viễn thám vệ tinh từ Google Earth Engine tương ứng với từng ô lưới 1 km.
 * **Nhiệm vụ chính:**
-  * Chạy trích xuất tự động theo chunk tháng cho ERA5-Land (nhiệt độ, độ ẩm, gió, mưa, áp suất, độ cao lớp biên BLH).
-  * Trích xuất CAMS NRT (AOD 550nm, PM2.5 nền) và Sentinel-5P TROPOMI ($\text{NO}_2$, tỷ lệ mây).
+  * Chạy trích xuất tự động theo chunk tháng cho ERA5-Land (nhiệt độ, độ ẩm, gió, mưa, áp suất; biến BLH từ ERA5 dự kiến V2).
+  * Trích xuất CAMS NRT (AOD 550nm, PM2.5 nền) và Sentinel-5P TROPOMI ($\text{NO}_2$, tỷ lệ mây), MODIS LST (nhiệt độ ngày/đêm). MAIAC AOD là V2 chưa chạy.
   * Đảm bảo mọi chunk parquet xuất ra chuẩn tên cột theo [docs/schema.md](docs/schema.md).
 
 ### 5. Transform & Feature Engineering (Chuyển đổi & Kỹ thuật Đặc trưng)
@@ -220,19 +224,40 @@ Mỗi thành viên sở hữu không gian làm việc (workspace) của mình. C
 
 ---
 
-## Quy trình Làm việc với Git & Pull Request
+## Kết quả Đánh giá Mô hình (M6 - Grouped Spatial 5-Fold Cross Validation)
 
-1. **Nhận nhiệm vụ:** Vào tab **Issues**, lọc theo nhãn vai trò của mình (ví dụ `role:crawler-a`, `role:transform`, `role:architect`), tự gán issue cho bản thân.
-2. **Tạo nhánh:** Tạo nhánh từ `main` mới nhất theo cú pháp: `<vai-tro>/<ten-tinh-nang>`:
-   ```bash
-   git switch main && git pull
-   git switch -c ingest/gee-s5p-pipeline
-   ```
-3. **Mở Pull Request:** Sau khi hoàn thành và tự kiểm tra, tạo PR vào nhánh `main`. Trong mô tả PR ghi rõ `Closes #<so-issue>`.
-4. **Điều kiện Merge:**
-   * Mọi PR liên quan đến cấu trúc `data/warehouse/` hoặc `schema.md` phải được duyệt bởi **Data Architect**.
-   * Mọi PR liên quan đến logic đánh giá mô hình và báo cáo thống kê phải được duyệt bởi **Analysis Lead**.
-   * Đảm bảo code chạy đúng, sạch sẽ và không commit dữ liệu thô nhạy cảm lên Git.
+Đánh giá out-of-fold trên toàn bộ 20.351 mẫu quan trắc trạm hợp lệ (tại 92 trạm trên 75 ô lưới). Đã áp dụng giao thức **gộp các ô kề nhau $\le 1.5\text{ km}$** (tạo thành 36 cụm không gian) và **loại bỏ tọa độ $(X,Y)$** để hạn chế cây quyết định học thuộc vị trí trạm (lưu ý: đây là giao thức spatial grouping cụ thể để tái lập kết quả, không phải bằng chứng đảm bảo "khử rò rỉ tuyệt đối"; cấu hình 79 nhóm $< 300\text{ m}$ được dùng làm phân tích độ nhạy):
+
+| Mô hình / Baseline | RMSE (µg/m³) | MAE (µg/m³) | Mean Bias | Overall R² | Spatial R² (thô) | Temporal R² | Anomaly R² (kỹ năng không gian thật) | Anomaly Corr |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **LightGBM lai (phần dư vs nền mạng)** | **3.79** | **2.47** | **-0.61** | **0.631** | **0.357** | **0.980** | **-0.085** | **+0.022** |
+| **LightGBM thuần (bỏ tọa độ, độc lập 100%)** | **3.91** | **2.68** | **-0.10** | **0.607** | **0.428** | **0.894** | **-0.093** | **+0.028** |
+| Baseline 3: IDW (Nội suy nghịch đảo k/cách) | **3.45** | **2.29** | **-0.13** | **0.694** | **0.533** | **0.997** | **+0.024** | **+0.189** |
+| Baseline 2: Daily Train Stations Mean | 3.51 | 2.35 | -0.02 | 0.684 | 0.512 | 1.000 | 0.000 (hằng số) | NaN |
+| Baseline 1: CAMS PM2.5 Nền (Reanalysis châu Âu) | 5.21 | 3.51 | -0.82 | 0.304 | 0.136 | 0.443 | -0.029 | -0.023 |
+
+* **Đánh giá khách quan từ số liệu thực nghiệm:**
+  * **Baseline IDW là chuẩn so sánh mạnh nhất:** Kết quả thực nghiệm cho thấy IDW đạt RMSE thấp nhất ($3.45\text{ }\mu\text{g/m}^3$) và Anomaly R² dương duy nhất ($+0.024$). Cả hai biến thể LightGBM (lai $3.79$ và thuần $3.91$) đều chưa vượt qua IDW trên tập dữ liệu kiểm tra ngoài cụm (held-out); **chưa có cơ sở thực nghiệm để tuyên bố LightGBM cải thiện kỹ năng biến thiên không gian so với IDW.**
+  * **Kỹ năng biến thiên không gian (Anomaly R²):** Anomaly R² của cả hai mô hình LightGBM đều mang giá trị âm ($-0.085$ và $-0.093$). Điều này cho thấy sau khi trừ đi mức trung bình ngày của toàn mạng trạm, mô hình học máy chưa giải thích được phương sai không gian cục bộ tốt hơn giá trị trung bình ngày.
+  * **Hai use case độc lập, không trộn lẫn:**
+    * *Mô hình Lai (`pm25_estimate`):* Phụ thuộc vào số đo quan trắc cùng ngày của mạng trạm mặt đất; chỉ áp dụng cho những ngày mạng trạm hoạt động.
+    * *Mô hình Thuần (`pm25_estimate_pure`):* Hoàn toàn độc lập với mạng trạm mặt đất tại thời điểm suy luận (chỉ dựa vào ERA5-Land, CAMS, viễn thám và biến tĩnh).
+* **Phân tầng sai số theo loại vi môi trường (`site_type`):**
+  * `Urban Background` (4.436 mẫu, 10 trạm): Mô hình lai đạt RMSE $2.43\text{ }\mu\text{g/m}^3$ (thấp hơn IDW $2.57\text{ }\mu\text{g/m}^3$ và CAMS $4.27\text{ }\mu\text{g/m}^3$). Đây là phân nhóm duy nhất mô hình lai tốt hơn IDW.
+  * `Roadside` (9.550 mẫu, 23 trạm): IDW đạt RMSE $3.10\text{ }\mu\text{g/m}^3$, tốt hơn mô hình lai ($3.27\text{ }\mu\text{g/m}^3$) và mô hình thuần ($3.48\text{ }\mu\text{g/m}^3$).
+  * `Suburban` (1.240 mẫu, 3 trạm): IDW đạt $2.28\text{ }\mu\text{g/m}^3$, tốt hơn mô hình lai ($2.43\text{ }\mu\text{g/m}^3$).
+  * `Kerbside` (839 mẫu, 5 trạm): IDW ($4.26\text{ }\mu\text{g/m}^3$) và Daily Mean ($4.12\text{ }\mu\text{g/m}^3$) tốt hơn mô hình lai ($4.93\text{ }\mu\text{g/m}^3$) do vi khí hậu giao thông đặc thù.
+  * `Unknown` (3.863 mẫu, 50 trạm — phần lớn là cảm biến Clarity/AirGradient): RMSE cao ở mọi mô hình ($5.04$ đến $5.89\text{ }\mu\text{g/m}^3$) do nhiễu đo lường và chưa hiệu chuẩn; nhóm này cần tách riêng để đánh giá độc lập.
+  * `Industrial` (423 mẫu, 1 trạm): IDW đạt $2.10\text{ }\mu\text{g/m}^3$ so với lai $2.44\text{ }\mu\text{g/m}^3$.
+* **Đặc trưng quan trọng (Feature Importance) & Thận trọng khoa học:**
+  * Top đặc trưng có tần suất phân nhánh cao nhất trong mô hình lai gồm: `built_up_frac` (#1), `dist_to_thames_km` (#2), `elevation_m` (#3), `dist_to_charing_cross_km` (#4), `tree_cover_frac` (#5), `population_density` (#6).
+  * *Lưu ý quan trọng:* Feature importance chỉ đo tần suất phân nhánh trong cây quyết định, **không phải bằng chứng về quan hệ nhân quả hay mô hình đã học được quy luật vật lý**. Do 92 trạm chỉ nằm trên 75 ô lưới duy nhất, các đặc trưng tĩnh bất biến theo thời gian có nguy cơ đóng vai trò như proxy nhận diện vị trí trạm.
+  * Ngoài ra, `dist_to_thames_km` trong code thực tế tính khoảng cách tới pixel nước thường trực bất kỳ (WorldCover Class 80), không phải sông Thames (quy ước chuẩn tương lai đổi thành `dist_to_nearest_mapped_water_km`); `population_density` là số đếm cư dân trên pixel 100m, không phải người/km² (ưu tiên lưu `ghsl_population_count` trước khi tính mật độ). Các đặc trưng này đang ở trạng thái `[V1-chưa xác minh]` và không thuộc tập chứng nhận.
+  * Các câu hỏi nghiên cứu Q1–Q5 trong [docs/analysis_plan.md](docs/analysis_plan.md) là giả thuyết đang kiểm chứng, chưa phải kết luận hoàn tất.
+
+---
+
+## Quy trình Làm việc với Git & Pull Request
 
 1. **Nhận nhiệm vụ:** Vào tab **Issues**, lọc theo nhãn vai trò của mình (ví dụ `role:crawler-a`, `role:transform`, `role:architect`), tự gán issue cho bản thân.
 2. **Tạo nhánh:** Tạo nhánh từ `main` mới nhất theo cú pháp: `<vai-tro>/<ten-tinh-nang>`:
